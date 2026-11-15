@@ -277,6 +277,7 @@ td input[type=checkbox]{width:20px;height:20px}
 </div>
 <div id="invConteudo" class="grid" hidden>
   <div class="invTopo"><h2 style="margin:0">Meus investimentos</h2><button class="btnCor" id="btnTravar" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Travar</button></div>
+  <p class="dica" id="invTaxasLinha" style="margin:-6px 0 0"></p>
   <div id="invResumo" class="grid"></div>
   <details class="bloco" id="invNovo"><summary><b class="ponto p1"></b><b id="invFormTitulo">Adicionar investimento</b><span></span><span class="q">Nome, tipo, valor, datas e rentabilidade</span></summary>
   <div class="corpo grid">
@@ -309,8 +310,8 @@ td input[type=checkbox]{width:20px;height:20px}
       <label>CDI (% ao ano)<input id="premCdi" inputmode="decimal"></label>
       <label>IPCA previsto (% ao ano)<input id="premIpca" inputmode="decimal"></label>
     </div>
-    <p class="dica">CDI de 13,65% ao ano com a Selic em 13,75% (Copom de 4/11/2026). IPCA de 4,7% ao ano, projeção do Banco Central para 2027. Atualize quando a Selic mudar.</p>
-    <button class="btn sec" id="btnPrem" type="button">Salvar taxas</button>
+    <p class="dica" id="premInfo"></p>
+    <div class="dois"><button class="btn" id="btnPremAuto" type="button">Atualizar agora pelo Banco Central</button><button class="btn sec" id="btnPrem" type="button">Usar estas taxas à mão</button></div>
   </div></details>
   <details class="bloco"><summary><b class="ponto p3"></b><b>Trocar senha</b><span></span><span class="q">Senha nova com pelo menos 4 caracteres</span></summary>
   <div class="corpo grid">
@@ -642,7 +643,8 @@ async function invApiLocal(d){
   else if(L.hash!==await hashLocal(d.senha))return{erro:'senha',restam:4};
   if(d.op==='salvar'){const it=d.item,linha=[it.id,it.nome,it.tipo,it.valor,it.aplicacao,it.retirada,it.tipoTaxa,it.taxa],i=L.itens.findIndex(r=>String(r[0])===String(it.id));if(i>=0)L.itens[i]=linha;else L.itens.push(linha)}
   if(d.op==='excluir')L.itens=L.itens.filter(r=>String(r[0])!==String(d.id));
-  if(d.op==='premissas')L.premissas=d.premissas;
+  if(d.op==='premissas')L.premissas={...d.premissas,auto:false};
+  if(d.op==='taxasAuto')L.premissas={...PREM_PADRAO,auto:true};
   if(d.op==='trocarSenha')L.hash=await hashLocal(d.novaSenha);
   invLocalGravar();return{ok:true,itens:L.itens,premissas:L.premissas||null};
 }
@@ -706,7 +708,11 @@ $('btnTravar').onclick=travarInv;
 function receberInv(j){invItens=(j.itens||[]).filter(r=>r[0]!==''&&r[0]!=null).map(deLinha);invPrem={...PREM_PADRAO,...(j.premissas||{})}}
 function mostrarInv(){$('invTrava').hidden=true;$('invConteudo').hidden=false;cutucar();
   $('premCdi').value=String(invPrem.cdi).replace('.',',');$('premIpca').value=String(invPrem.ipca).replace('.',',');
-  $('invPremResumo').textContent=`CDI ${pctBR(invPrem.cdi)} e IPCA ${pctBR(invPrem.ipca)} ao ano`;
+  const P=invPrem,quando=P.atualizadoMs?new Date(P.atualizadoMs).toLocaleDateString('pt-BR'):'';
+  $('invPremResumo').textContent=`CDI ${pctBR(P.cdi)} e IPCA ${pctBR(P.ipca)} ao ano · ${P.auto===false?'digitadas à mão':'automáticas'}`;
+  $('invTaxasLinha').textContent=`Calculado com CDI de ${pctBR(P.cdi)} e IPCA de ${pctBR(P.ipca)} ao ano${P.auto===false?' (taxas digitadas à mão)':quando?`, atualizados pelo Banco Central em ${quando}`:''}.`;
+  $('premInfo').textContent=P.auto===false?'Você está usando taxas digitadas à mão. Para voltar a atualizar sozinho, toque em "Atualizar agora pelo Banco Central".'
+    :`As taxas são buscadas no Banco Central uma vez por dia, quando você abre esta aba. CDI do dia${P.cdiData?` (${P.cdiData})`:''} convertido para ao ano e expectativa de IPCA para os próximos 12 meses do Boletim Focus${P.ipcaData?` (${dataBR(P.ipcaData)})`:''}.${P.erro?' '+P.erro:''}${MODO_TESTE?' Aqui no teste do chat elas ficam fixas; no app publicado atualizam sozinhas.':''}`;
   if(!invItens.length)$('invNovo').open=true;renderInv()}
 
 // ---- tela ----
@@ -782,7 +788,8 @@ $('btnInvSalvar').onclick=async()=>{const it=formInv(),st=$('invStatus');st.text
 async function excluirInv(b){if(b.dataset.conf!=='1'){b.dataset.conf='1';b.textContent='Toque de novo para excluir';setTimeout(()=>{b.dataset.conf='';b.textContent='Excluir'},4000);return}
   const j=await chamarInv({op:'excluir',id:b.dataset.del},b,'Excluindo...');if(j&&!j.erro){toast('Investimento excluído.');renderInv()}else if(j)toast(msgErro(j))}
 $('btnPrem').onclick=async()=>{const pr={cdi:valorDigitado($('premCdi').value),ipca:valorDigitado($('premIpca').value)};if(!pr.cdi){toast('Digite o CDI.');return}
-  const j=await chamarInv({op:'premissas',premissas:pr},$('btnPrem'),'Salvando...');if(j&&!j.erro){toast('Taxas salvas.');mostrarInv()}else if(j)toast(msgErro(j))};
+  const j=await chamarInv({op:'premissas',premissas:pr},$('btnPrem'),'Salvando...');if(j&&!j.erro){toast('Taxas salvas. Elas não serão mais atualizadas sozinhas.');mostrarInv()}else if(j)toast(msgErro(j))};
+$('btnPremAuto').onclick=async()=>{const j=await chamarInv({op:'taxasAuto'},$('btnPremAuto'),'Buscando...');if(j&&!j.erro){toast(invPrem.erro?'Não consegui atualizar agora.':'Taxas atualizadas.');mostrarInv()}else if(j)toast(msgErro(j))};
 $('btnTrocarSenha').onclick=async()=>{const n=$('novaSenha').value;if(n.length<4){toast(MSG_ERRO.senha_curta);return}
   const j=await chamarInv({op:'trocarSenha',novaSenha:n},$('btnTrocarSenha'),'Trocando...');if(j&&!j.erro){invSenha=n;$('novaSenha').value='';toast('Senha trocada.')}else if(j)toast(msgErro(j))};
 limparFormInv();
